@@ -1,0 +1,170 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --bg: #0b0f19;
+    --surface: #111827;
+    --surface-2: #1a2235;
+    --surface-hover: #1f2937;
+    --text-primary: #f9fafb;
+    --text-secondary: #9ca3af;
+    --live: #ff3b30;
+    --accent-blue: #4f8bff;
+    --accent-purple: #a855f7;
+    --border: rgba(255, 255, 255, 0.08);
+}
+
+html,
+body {
+    background: var(--bg);
+    color: var(--text-primary);
+    min-height: 100%;
+}
+
+body {
+    margin: 0;
+    font-family: "Manrope", "General Sans", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background:
+        radial-gradient(
+            ellipse 1200px 600px at 10% -20%,
+            rgba(79, 139, 255, 0.08),
+            transparent 60%
+        ),
+        radial-gradient(
+            ellipse 1000px 500px at 110% 30%,
+            rgba(168, 85, 247, 0.1),
+            transparent 60%
+        ),
+        var(--bg);
+}
+
+.font-display {
+    font-family: "Clash Display", "General Sans", sans-serif;
+    letter-spacing: -0.02em;
+}
+
+.font-body {
+    font-family: "Manrope", sans-serif;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+}
+
+/* Hide scrollbar for horizontal chip rows */
+.no-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+.no-scrollbar {
+    scrollbar-width: none;
+}
+
+/* Ticket stub notched edges */
+.ticket-stub {
+    -webkit-mask-image:
+        radial-gradient(circle 14px at 0 50%, transparent 97%, #000 100%),
+        radial-gradient(circle 14px at 100% 50%, transparent 97%, #000 100%),
+        linear-gradient(#000, #000);
+    mask-image:
+        radial-gradient(circle 14px at 0 50%, transparent 97%, #000 100%),
+        radial-gradient(circle 14px at 100% 50%, transparent 97%, #000 100%),
+        linear-gradient(#000, #000);
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size:
+        50% 100%,
+        50% 100%,
+        100% 100%;
+    mask-size:
+        50% 100%,
+        50% 100%,
+        100% 100%;
+    -webkit-mask-position:
+        left center,
+        right center,
+        center;
+    mask-position:
+        left center,
+        right center,
+        center;
+}
+
+/* Live pulse dot */
+@keyframes live-pulse {
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.6);
+    }
+    50% {
+        box-shadow: 0 0 0 6px rgba(255, 59, 48, 0);
+    }
+}
+.live-dot {
+    animation: live-pulse 1.6s infinite;
+}
+
+/* Noise texture overlay */
+.noise::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.04;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.6'/></svg>");
+}
+
+/* Barcode */
+.barcode {
+    background-image: repeating-linear-gradient(
+        to right,
+        #0b0f19 0,
+        #0b0f19 2px,
+        transparent 2px,
+        transparent 4px,
+        #0b0f19 4px,
+        #0b0f19 7px,
+        transparent 7px,
+        transparent 9px
+    );
+}
+
+/* Phone frame on desktop */
+.phone-frame {
+    position: relative;
+    border-radius: 48px;
+    padding: 14px;
+    background: linear-gradient(
+        140deg,
+        rgba(255, 255, 255, 0.08),
+        rgba(255, 255, 255, 0.02)
+    );
+    box-shadow:
+        0 30px 80px -20px rgba(0, 0, 0, 0.8),
+        0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+@layer base {
+    * {
+        border-color: var(--border);
+    }
+}
+
+.App {
+    min-height: 100vh;
+}
+
+html {
+    scroll-behavior: smooth;
+}
