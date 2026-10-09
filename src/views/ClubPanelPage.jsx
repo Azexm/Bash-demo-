@@ -991,8 +991,10 @@ function GatesTab() {
 
 const RESULT = {
     admitted: ["green", "Admitted"],
+    scanned: ["grey", "Scanned"],
     already_used: ["amber", "Already used"],
     declined: ["red", "Declined"],
+    not_approved: ["red", "Not approved"],
     invalid: ["red", "Invalid"],
 };
 

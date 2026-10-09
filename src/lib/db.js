@@ -111,6 +111,12 @@ const STATEMENTS = [
         scanned_at   timestamptz NOT NULL DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS scan_logs_club_idx ON scan_logs (club_id, scanned_at DESC)`,
+    `ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS attendee_name text`,
+    `ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS attendee_phone text`,
+    `ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS event_title text`,
+    `ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS tier text`,
+    `ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS quantity integer`,
+    `ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS decided_at timestamptz`,
     `CREATE TABLE IF NOT EXISTS email_logs (
         id         text PRIMARY KEY,
         booking_id text,

@@ -69,3 +69,14 @@ export async function listAllBookings() {
           FROM bookings ORDER BY created_at DESC LIMIT 200`;
     return rows;
 }
+
+/** Every QR scan and gate decision across all clubs, newest first. */
+export async function listAllScans(limit = 500) {
+    await ensureReady();
+    const rows = await sql`SELECT * FROM scan_logs ORDER BY scanned_at DESC LIMIT ${limit}`;
+    return rows.map((r) => ({
+        ...r,
+        scanned_at: r.scanned_at ? new Date(r.scanned_at).toISOString() : null,
+        decided_at: r.decided_at ? new Date(r.decided_at).toISOString() : null,
+    }));
+}

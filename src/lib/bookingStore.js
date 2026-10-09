@@ -180,7 +180,7 @@ const reasonOf = (reason) => {
 
 /**
  * Club decisions: approve | reject | cancel | transfer.
- * Every decision except transfer deletes the guest's ID photo.
+ * Reject and cancel delete the guest's ID photo. Approve keeps it for the gate.
  */
 export async function reviewBooking({ bookingId, clubId, reviewerId, action, reason, attendee }) {
     await ensureReady();
@@ -197,7 +197,7 @@ export async function reviewBooking({ bookingId, clubId, reviewerId, action, rea
              WHERE id = ${bookingId} AND status = 'pending'
          RETURNING id`);
         if (!up.length) throw new BookingError("This booking was changed, please refresh", 409);
-        await deleteIdPhoto(bookingId);
+        // the ID photo stays until the gate makes its decision (see decideScan)
     } else if (action === "reject") {
         if (b.status !== "pending") throw new BookingError(`Only pending bookings can be rejected (this one is ${b.status})`, 409);
         const why = reasonOf(reason);
@@ -231,57 +231,96 @@ export async function reviewBooking({ bookingId, clubId, reviewerId, action, rea
 
 /* ---------------- gate ---------------- */
 
+const normalizeCode = (code) => String(code ?? "").trim().toUpperCase().slice(0, 40);
+
+async function logScan({ bookingId = null, code, clubId, gate, result, reason = null, b = null }) {
+    const id = crypto.randomBytes(12).toString("hex");
+    await sql`INSERT INTO scan_logs (id, booking_id, ticket_code, event_id, club_id, gate_user_id, gate_name,
+                                     result, reason, attendee_name, attendee_phone, event_title, tier, quantity)
+              VALUES (${id}, ${bookingId}, ${code}, ${b?.event_id ?? null}, ${clubId}, ${gate.id}, ${gate.name},
+                      ${result}, ${reason}, ${b?.attendee_name ?? null}, ${b?.attendee_phone ?? null},
+                      ${b?.event_title ?? null}, ${b?.tier ?? null}, ${b?.quantity ?? null})`;
+    return id;
+}
+
 /**
- * Scans a ticket at the door. Writes a scan log for every attempt.
- * result: admitted | already_used | declined | invalid
+ * Step 1 of the gate flow: a QR (or typed) code is read. Nothing is admitted yet.
+ * Returns the guest details so the gate can check them. Every read is logged as a scan.
+ * result: scanned (eligible, waiting for a decision) | not_approved | already_used | invalid
  */
-export async function scanTicket({ code, clubId, gate }) {
+export async function lookupTicket({ code, clubId, gate }) {
     await ensureReady();
-    const clean = String(code ?? "").trim().toUpperCase().slice(0, 40);
+    const clean = normalizeCode(code);
     if (!clean) throw new BookingError("Enter a ticket code", 422);
 
-    const rows = await sql`SELECT * FROM bookings WHERE ticket_code = ${clean}`;
-    const b = rows[0] && rows[0].club_id === clubId ? rows[0] : null;
+    const rows = await sql`
+        SELECT b.*, (p.booking_id IS NOT NULL) AS has_photo_row, p.deleted_at AS photo_deleted_at
+          FROM bookings b
+          LEFT JOIN id_photos p ON p.booking_id = b.id
+         WHERE b.ticket_code = ${clean}`;
+    const row = rows[0] && rows[0].club_id === clubId ? rows[0] : null;
 
-    let result;
-    let reason = null;
-    if (!b) {
-        result = "invalid";
-        reason = "No ticket with this code at your venue";
-    } else if (b.status !== "approved") {
-        result = "declined";
-        reason = `Ticket is ${b.status}`;
-    } else if (b.used_at) {
-        result = "already_used";
-        reason = `Already admitted at ${new Date(b.used_at).toLocaleTimeString("en-IN")}`;
-    } else {
-        const upd = await sql`UPDATE bookings SET used_at = now()
-                               WHERE id = ${b.id} AND used_at IS NULL RETURNING id`;
-        if (upd.length) {
-            result = "admitted";
-        } else {
-            result = "already_used";
-            reason = "Admitted a moment ago at another gate";
-        }
+    if (!row) {
+        const scan_id = await logScan({ code: clean, clubId, gate, result: "invalid", reason: "No ticket with this code at your venue" });
+        return { result: "invalid", reason: "No ticket with this code at your venue", scan_id, booking: null };
     }
 
-    await sql`INSERT INTO scan_logs (id, booking_id, ticket_code, event_id, club_id, gate_user_id, gate_name, result, reason)
-              VALUES (${crypto.randomBytes(12).toString("hex")}, ${b?.id ?? null}, ${clean},
-                      ${b?.event_id ?? null}, ${clubId}, ${gate.id}, ${gate.name}, ${result}, ${reason})`;
+    const booking = withPhotoStatus(row);
+    let result;
+    let reason = null;
+    if (row.status !== "approved") {
+        result = "not_approved";
+        reason = row.status === "pending" ? "Not approved by the club yet" : `Ticket is ${row.status}`;
+    } else if (row.used_at) {
+        result = "already_used";
+        reason = `Already admitted at ${new Date(row.used_at).toLocaleTimeString("en-IN")}`;
+    } else {
+        result = "scanned";
+    }
 
-    return {
-        result,
-        reason,
-        ticket: b
-            ? {
-                  attendee_name: b.attendee_name,
-                  tier: b.tier,
-                  quantity: b.quantity,
-                  event_title: b.event_title,
-                  ticket_code: b.ticket_code,
-              }
-            : null,
-    };
+    const scan_id = await logScan({ bookingId: row.id, code: clean, clubId, gate, result, reason, b: row });
+    return { result, reason, scan_id, booking };
+}
+
+/**
+ * Step 2: the gate approves (admits) or declines the guest shown by lookupTicket.
+ * Approving sets used_at so the ticket cannot be used twice. The ID photo is deleted
+ * once the door has decided, whichever the decision is.
+ */
+export async function decideScan({ scanId, clubId, gate, decision }) {
+    await ensureReady();
+    if (!["approve", "decline"].includes(decision)) {
+        throw new BookingError("Decision must be approve or decline", 422);
+    }
+    const rows = await sql`SELECT * FROM scan_logs WHERE id = ${scanId} AND club_id = ${clubId}`;
+    if (!rows.length) throw new BookingError("Scan not found", 404);
+    const s = rows[0];
+    if (s.result !== "scanned") {
+        throw new BookingError(`This scan is already ${s.result.replace("_", " ")}`, 409);
+    }
+
+    let final;
+    let reason = null;
+    if (decision === "approve") {
+        const up = await sql`UPDATE bookings SET used_at = now()
+                               WHERE id = ${s.booking_id} AND club_id = ${clubId}
+                                 AND status = 'approved' AND used_at IS NULL
+                           RETURNING id`;
+        if (up.length) {
+            final = "admitted";
+        } else {
+            final = "already_used";
+            reason = "Admitted a moment ago at another gate";
+        }
+    } else {
+        final = "declined";
+        reason = "Entry refused at the gate";
+    }
+
+    await sql`UPDATE scan_logs SET result = ${final}, reason = ${reason}, decided_at = now()
+               WHERE id = ${scanId}`;
+    if (s.booking_id) await deleteIdPhoto(s.booking_id);
+    return { result: final, reason, scan_id: scanId };
 }
 
 export async function listScans(clubId, limit = 200) {
@@ -289,7 +328,7 @@ export async function listScans(clubId, limit = 200) {
     const rows = await sql`
         SELECT * FROM scan_logs WHERE club_id = ${clubId}
          ORDER BY scanned_at DESC LIMIT ${limit}`;
-    return rows.map((r) => ({ ...r, scanned_at: iso(r.scanned_at) }));
+    return rows.map((r) => ({ ...r, scanned_at: iso(r.scanned_at), decided_at: iso(r.decided_at) }));
 }
 
 export { IMAGE_RE, MAX_PHOTO_BYTES };
