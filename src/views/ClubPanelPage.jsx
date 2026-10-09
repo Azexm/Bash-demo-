@@ -8,6 +8,7 @@ import AppShell from "@/components/AppShell";
 import { Card, Field, Btn, Badge, Tabs, Empty, inputCls, fmtDateTime } from "@/components/PanelUI";
 import { api, formatErr, inr } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { isVerified } from "@/lib/clubOnboarding";
 import {
     GENRES,
     BOOKING_TYPES,
@@ -215,8 +216,14 @@ function EventsTab() {
         );
     }
 
+    const verified = isVerified(data.club);
     return (
         <div className="space-y-4">
+            {data.club && !verified && (
+                <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 p-4 font-body text-sm text-amber-100" data-testid="club-unverified-banner">
+                    Your club is not approved yet. Bash is reviewing your documents. You can create events once the club is approved.
+                </div>
+            )}
             <div className="flex items-center justify-between flex-wrap gap-3">
                 <div className="font-body text-sm text-white/60" data-testid="club-summary">
                     {data.club ? (
@@ -228,7 +235,7 @@ function EventsTab() {
                         "Loading club…"
                     )}
                 </div>
-                <Btn variant="primary" onClick={() => setEditing("new")} data-testid="new-event-btn">
+                <Btn variant="primary" onClick={() => setEditing("new")} disabled={!verified} data-testid="new-event-btn">
                     <Plus className="w-4 h-4" /> New event
                 </Btn>
             </div>

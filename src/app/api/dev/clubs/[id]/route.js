@@ -1,5 +1,6 @@
 import { requireRole } from "@/lib/roles";
-import { updateClub } from "@/lib/clubStore";
+import { updateClub, getClub } from "@/lib/clubStore";
+import { isVerified } from "@/lib/clubOnboarding";
 import { CITIES } from "@/lib/geo";
 import { fail, ok, route } from "@/lib/http";
 
@@ -26,6 +27,12 @@ export const PATCH = route(async (req, { params }) => {
         if (!city) return fail("Pick a city we operate in");
         patch.city = city.name;
         patch.city_slug = city.slug;
+    }
+    if (patch.is_active === true) {
+        const current = await getClub(params.id);
+        if (current && !isVerified(current)) {
+            return fail("Approve the club\u2019s documents in Club applications first", 409);
+        }
     }
     const club = await updateClub(params.id, patch);
     if (!club) return fail("Club not found", 404);

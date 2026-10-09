@@ -1,4 +1,5 @@
 import { requireRole } from "@/lib/roles";
+import { isVerified } from "@/lib/clubOnboarding";
 import { getClub } from "@/lib/clubStore";
 import { getEvent, listEvents, updateEvent } from "@/lib/eventStore";
 import { checkVenueQuota, normalizeClubEvent } from "@/lib/eventSchema";
@@ -16,6 +17,7 @@ export const PUT = route(async (req, { params }) => {
     if (existing.seeded) return fail("Built-in listings cannot be edited here", 409);
 
     const club = await getClub(user.club_id);
+    if (!isVerified(club)) return fail("This club is not approved yet. Bash is reviewing its documents.", 403);
     const raw = await req.json().catch(() => ({}));
     const { event, errors } = normalizeClubEvent(raw, club);
     if (errors) return fail(errors.map((msg) => ({ msg })), 422);

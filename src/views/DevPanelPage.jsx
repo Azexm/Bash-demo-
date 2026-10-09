@@ -9,6 +9,7 @@ import { Card, Field, Btn, Badge, Tabs, Empty, inputCls, fmtDateTime } from "@/c
 import { api, formatErr, inr } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { CITIES } from "@/lib/geo";
+import ClubOnboarding from "@/components/ClubOnboarding";
 
 const TABS = [
     { id: "overview", label: "Overview" },
@@ -175,7 +176,9 @@ function ClubsTab() {
 
     return (
         <div className="space-y-5">
-            <Card title="Add a club" subtitle="Club admins are linked to a club from the Users & roles tab.">
+            <ClubOnboarding onChanged={load} />
+
+            <Card title="Add a club" subtitle="Quick add without documents. Use Club applications above for a full onboarding.">
                 <form onSubmit={create} className="grid md:grid-cols-[1.5fr_1fr_2fr_1fr_auto] gap-3 items-end" data-testid="new-club-form">
                     <input className={inputCls} placeholder="Club name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                     <select className={inputCls} value={form.city_slug} onChange={(e) => setForm({ ...form, city_slug: e.target.value })}>
@@ -228,6 +231,9 @@ function ClubCardDetail({ club: c, onSaved }) {
                         <h3 className="font-display text-xl font-semibold">{c.name}</h3>
                         {c.seeded && <Badge>Built-in</Badge>}
                         <Badge tone={c.is_active ? "green" : "red"}>{c.is_active ? "Active" : "Inactive"}</Badge>
+                        {c.verification_status && c.verification_status !== "approved" && (
+                            <Badge tone="amber">{c.verification_status === "rejected" ? "Rejected" : "Documents pending"}</Badge>
+                        )}
                     </div>
                     <div className="font-body text-xs text-white/50 mt-1">
                         {c.city} · {c.address}

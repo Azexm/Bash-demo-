@@ -90,6 +90,28 @@ const STATEMENTS = [
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS transferred_from text`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS used_at timestamptz`,
     `CREATE INDEX IF NOT EXISTS bookings_club_idx ON bookings (club_id, created_at DESC)`,
+    // Club onboarding: application details (one row per club), and uploaded documents.
+    `CREATE TABLE IF NOT EXISTS club_applications (
+        club_id       text PRIMARY KEY,
+        data          jsonb NOT NULL,
+        status        text NOT NULL DEFAULT 'pending_documents',
+        reviewer_note text,
+        created_at    timestamptz NOT NULL DEFAULT now(),
+        updated_at    timestamptz NOT NULL DEFAULT now(),
+        decided_at    timestamptz
+    )`,
+    `CREATE TABLE IF NOT EXISTS club_documents (
+        id            text PRIMARY KEY,
+        club_id       text NOT NULL,
+        kind          text NOT NULL,
+        file_name     text,
+        mime          text NOT NULL,
+        data          text NOT NULL,
+        status        text NOT NULL DEFAULT 'pending',
+        reviewer_note text,
+        uploaded_at   timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS club_documents_club_idx ON club_documents (club_id)`,
     // Flyers and other public images (served by /api/assets/[id])
     `CREATE TABLE IF NOT EXISTS assets (
         id         text PRIMARY KEY,
