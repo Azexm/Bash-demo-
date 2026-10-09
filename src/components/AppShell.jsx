@@ -13,6 +13,7 @@ const LINKS = {
     user: [
         { href: "/", label: "Live Now", icon: Home, id: "home" },
         { href: "/tickets", label: "My Tickets", icon: Ticket, id: "tickets" },
+        { href: "/profile", label: "Profile", icon: User, id: "profile" },
     ],
     club_admin: [{ href: "/club", label: "Club Panel", icon: LayoutDashboard, id: "club" }],
     gate: [{ href: "/gate", label: "Gate Scanner", icon: ScanLine, id: "gate" }],

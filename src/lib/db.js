@@ -5,6 +5,7 @@ import { neon } from "@neondatabase/serverless";
 import crypto from "crypto";
 import { promisify } from "util";
 import { seedClubs } from "@/data/seedClubs";
+import { newBashId } from "@/lib/bashId";
 
 const scrypt = promisify(crypto.scrypt);
 
@@ -40,6 +41,11 @@ const STATEMENTS = [
     )`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'user'`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS club_id text`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS bash_id text`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS users_bash_id_key ON users (bash_id)`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram text`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_top text`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_side text`,
     `CREATE TABLE IF NOT EXISTS events (
         id         text PRIMARY KEY,
         data       jsonb NOT NULL,
@@ -170,6 +176,21 @@ async function migrateOnce(q, name, fn) {
     await q`INSERT INTO schema_migrations (name) VALUES (${name}) ON CONFLICT DO NOTHING`;
 }
 
+// Gives every user without a Bash ID one (existing users, demo accounts).
+async function backfillBashIds(q) {
+    const missing = await q`SELECT id FROM users WHERE bash_id IS NULL`;
+    for (const row of missing) {
+        for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+                await q`UPDATE users SET bash_id = ${newBashId()} WHERE id = ${row.id} AND bash_id IS NULL`;
+                break;
+            } catch (e) {
+                if (e?.code !== "23505") throw e; // collision: try another ID
+            }
+        }
+    }
+}
+
 let ready = null;
 
 /**
@@ -212,6 +233,7 @@ export function ensureReady() {
                             ON CONFLICT (email) DO NOTHING`;
                 }
             }
+            await backfillBashIds(q);
         })().catch((e) => {
             ready = null; // let the next request try again
             throw e;

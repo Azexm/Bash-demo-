@@ -1,5 +1,6 @@
 // Server-only auth: users in Neon (table: users), scrypt password hashes, signed tokens.
 import crypto from "crypto";
+import { newBashId } from "@/lib/bashId";
 import { promisify } from "util";
 import { sql, ensureReady } from "@/lib/db";
 
@@ -75,9 +76,9 @@ export async function createUser({ name, email, password, role = "user", club_id
     await ensureReady();
     const clean = String(email).trim().toLowerCase();
     const rows = await sql`
-        INSERT INTO users (id, name, email, password_hash, role, club_id)
+        INSERT INTO users (id, name, email, password_hash, role, club_id, bash_id)
         VALUES (${crypto.randomBytes(12).toString("hex")}, ${String(name).trim()}, ${clean},
-                ${await hashPassword(password)}, ${role}, ${club_id})
+                ${await hashPassword(password)}, ${role}, ${club_id}, ${newBashId()})
         ON CONFLICT (email) DO NOTHING
         RETURNING *`;
     return rows[0] || null; // null = already registered
