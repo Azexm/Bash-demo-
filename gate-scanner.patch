@@ -1,0 +1,973 @@
+diff --git a/src/app/api/dev/scans/route.js b/src/app/api/dev/scans/route.js
+new file mode 100644
+index 0000000..b3e39c7
+--- /dev/null
++++ b/src/app/api/dev/scans/route.js
+@@ -0,0 +1,12 @@
++import { requireRole } from "@/lib/roles";
++import { listAllScans } from "@/lib/devStore";
++import { ok, route } from "@/lib/http";
++
++export const dynamic = "force-dynamic";
++
++// Developer: every QR scan and gate decision across all clubs.
++export const GET = route(async (req) => {
++    const { error } = await requireRole(req, ["developer"]);
++    if (error) return error;
++    return ok(await listAllScans());
++});
+diff --git a/src/app/api/gate/decision/route.js b/src/app/api/gate/decision/route.js
+new file mode 100644
+index 0000000..fccee91
+--- /dev/null
++++ b/src/app/api/gate/decision/route.js
+@@ -0,0 +1,20 @@
++import { requireRole } from "@/lib/roles";
++import { decideScan } from "@/lib/bookingStore";
++import { ok, route } from "@/lib/http";
++
++export const dynamic = "force-dynamic";
++
++// Gate step 2: approve (admit) or decline the guest from a scan. Body: { scan_id, decision }
++export const POST = route(async (req) => {
++    const { user, error } = await requireRole(req, ["gate", "club_admin"]);
++    if (error) return error;
++    const b = await req.json().catch(() => ({}));
++    return ok(
++        await decideScan({
++            scanId: String(b.scan_id ?? ""),
++            clubId: user.club_id,
++            gate: { id: user.id, name: user.name },
++            decision: b.decision,
++        }),
++    );
++});
+diff --git a/src/app/api/gate/lookup/route.js b/src/app/api/gate/lookup/route.js
+new file mode 100644
+index 0000000..d1a6d54
+--- /dev/null
++++ b/src/app/api/gate/lookup/route.js
+@@ -0,0 +1,19 @@
++import { requireRole } from "@/lib/roles";
++import { lookupTicket } from "@/lib/bookingStore";
++import { ok, route } from "@/lib/http";
++
++export const dynamic = "force-dynamic";
++
++// Gate step 1: read a QR/typed code. Returns the guest details. Nothing is admitted yet.
++export const POST = route(async (req) => {
++    const { user, error } = await requireRole(req, ["gate", "club_admin"]);
++    if (error) return error;
++    const b = await req.json().catch(() => ({}));
++    return ok(
++        await lookupTicket({
++            code: b.code,
++            clubId: user.club_id,
++            gate: { id: user.id, name: user.name },
++        }),
++    );
++});
+diff --git a/src/app/api/gate/photo/[id]/route.js b/src/app/api/gate/photo/[id]/route.js
+new file mode 100644
+index 0000000..70e2886
+--- /dev/null
++++ b/src/app/api/gate/photo/[id]/route.js
+@@ -0,0 +1,14 @@
++import { requireRole } from "@/lib/roles";
++import { getIdPhotoForReview } from "@/lib/bookingStore";
++import { fail, ok, route } from "@/lib/http";
++
++export const dynamic = "force-dynamic";
++
++// Gate: the guest's ID photo, only for a booking at this venue, only until the door decides.
++export const GET = route(async (req, { params }) => {
++    const { user, error } = await requireRole(req, ["gate", "club_admin"]);
++    if (error) return error;
++    const data = await getIdPhotoForReview(params.id, user.club_id);
++    if (!data) return fail("No ID photo on file for this guest", 404);
++    return ok({ data });
++});
+diff --git a/src/app/api/gate/scan/route.js b/src/app/api/gate/scan/route.js
+deleted file mode 100644
+index 53c5d7d..0000000
+--- a/src/app/api/gate/scan/route.js
++++ /dev/null
+@@ -1,19 +0,0 @@
+-import { requireRole } from "@/lib/roles";
+-import { scanTicket } from "@/lib/bookingStore";
+-import { ok, route } from "@/lib/http";
+-
+-export const dynamic = "force-dynamic";
+-
+-// Gate: scan a ticket code. Body: { code }. Always returns 200 with a result,
+-// so a declined scan is a normal answer, not an error.
+-export const POST = route(async (req) => {
+-    const { user, error } = await requireRole(req, ["gate", "club_admin"]);
+-    if (error) return error;
+-    const b = await req.json().catch(() => ({}));
+-    const result = await scanTicket({
+-        code: b.code,
+-        clubId: user.club_id,
+-        gate: { id: user.id, name: user.name },
+-    });
+-    return ok(result);
+-});
+diff --git a/src/components/QRScanner.jsx b/src/components/QRScanner.jsx
+new file mode 100644
+index 0000000..6414bb2
+--- /dev/null
++++ b/src/components/QRScanner.jsx
+@@ -0,0 +1,83 @@
++"use client";
++
++import { useEffect, useRef, useState } from "react";
++
++// Reads QR codes from the camera with the browser's built-in BarcodeDetector.
++// Supported in Chrome and Edge (Android and desktop). Where it is missing, the
++// gate uses "Type code" instead. The camera stops as soon as one code is read,
++// and it restarts when this component is mounted again.
++export default function QRScanner({ onCode }) {
++    const videoRef = useRef(null);
++    const onCodeRef = useRef(onCode);
++    onCodeRef.current = onCode;
++    const [message, setMessage] = useState("Starting camera…");
++
++    useEffect(() => {
++        if (typeof window === "undefined" || !("BarcodeDetector" in window)) {
++            setMessage("This browser cannot read QR codes from the camera. Use Chrome or Edge, or switch to Type code.");
++            return;
++        }
++
++        let stream = null;
++        let timer = null;
++        let done = false;
++        const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
++
++        (async () => {
++            try {
++                stream = await navigator.mediaDevices.getUserMedia({
++                    video: { facingMode: { ideal: "environment" } },
++                    audio: false,
++                });
++                if (done) {
++                    stream.getTracks().forEach((t) => t.stop());
++                    return;
++                }
++                const video = videoRef.current;
++                video.srcObject = stream;
++                await video.play();
++                setMessage("Point the camera at the guest's QR code");
++
++                timer = setInterval(async () => {
++                    if (done || video.readyState < 2) return;
++                    try {
++                        const codes = await detector.detect(video);
++                        if (codes.length && !done) {
++                            done = true;
++                            onCodeRef.current(codes[0].rawValue);
++                        }
++                    } catch {
++                        /* a frame failed to decode; try the next one */
++                    }
++                }, 250);
++            } catch {
++                setMessage("Camera unavailable. Allow camera access, or use Type code.");
++            }
++        })();
++
++        return () => {
++            done = true;
++            clearInterval(timer);
++            if (stream) stream.getTracks().forEach((t) => t.stop());
++        };
++    }, []);
++
++    return (
++        <div className="relative rounded-3xl overflow-hidden bg-black border border-white/10 aspect-[3/4] md:aspect-video max-h-[70vh] mx-auto w-full">
++            <video
++                ref={videoRef}
++                playsInline
++                muted
++                autoPlay
++                data-testid="gate-camera"
++                className="absolute inset-0 w-full h-full object-cover"
++            />
++            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
++                <div className="w-3/5 aspect-square rounded-2xl border-2 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]" />
++            </div>
++            <div className="absolute bottom-0 inset-x-0 p-4 bg-gradient-to-t from-black/80 to-transparent text-center font-body text-sm text-white/90">
++                {message}
++            </div>
++        </div>
++    );
++}
+diff --git a/src/lib/bookingStore.js b/src/lib/bookingStore.js
+index e625131..735d50f 100644
+--- a/src/lib/bookingStore.js
++++ b/src/lib/bookingStore.js
+@@ -180,7 +180,7 @@ const reasonOf = (reason) => {
+ 
+ /**
+  * Club decisions: approve | reject | cancel | transfer.
+- * Every decision except transfer deletes the guest's ID photo.
++ * Reject and cancel delete the guest's ID photo. Approve keeps it for the gate.
+  */
+ export async function reviewBooking({ bookingId, clubId, reviewerId, action, reason, attendee }) {
+     await ensureReady();
+@@ -197,7 +197,7 @@ export async function reviewBooking({ bookingId, clubId, reviewerId, action, rea
+              WHERE id = ${bookingId} AND status = 'pending'
+          RETURNING id`);
+         if (!up.length) throw new BookingError("This booking was changed, please refresh", 409);
+-        await deleteIdPhoto(bookingId);
++        // the ID photo stays until the gate makes its decision (see decideScan)
+     } else if (action === "reject") {
+         if (b.status !== "pending") throw new BookingError(`Only pending bookings can be rejected (this one is ${b.status})`, 409);
+         const why = reasonOf(reason);
+@@ -231,57 +231,96 @@ export async function reviewBooking({ bookingId, clubId, reviewerId, action, rea
+ 
+ /* ---------------- gate ---------------- */
+ 
++const normalizeCode = (code) => String(code ?? "").trim().toUpperCase().slice(0, 40);
++
++async function logScan({ bookingId = null, code, clubId, gate, result, reason = null, b = null }) {
++    const id = crypto.randomBytes(12).toString("hex");
++    await sql`INSERT INTO scan_logs (id, booking_id, ticket_code, event_id, club_id, gate_user_id, gate_name,
++                                     result, reason, attendee_name, attendee_phone, event_title, tier, quantity)
++              VALUES (${id}, ${bookingId}, ${code}, ${b?.event_id ?? null}, ${clubId}, ${gate.id}, ${gate.name},
++                      ${result}, ${reason}, ${b?.attendee_name ?? null}, ${b?.attendee_phone ?? null},
++                      ${b?.event_title ?? null}, ${b?.tier ?? null}, ${b?.quantity ?? null})`;
++    return id;
++}
++
+ /**
+- * Scans a ticket at the door. Writes a scan log for every attempt.
+- * result: admitted | already_used | declined | invalid
++ * Step 1 of the gate flow: a QR (or typed) code is read. Nothing is admitted yet.
++ * Returns the guest details so the gate can check them. Every read is logged as a scan.
++ * result: scanned (eligible, waiting for a decision) | not_approved | already_used | invalid
+  */
+-export async function scanTicket({ code, clubId, gate }) {
++export async function lookupTicket({ code, clubId, gate }) {
+     await ensureReady();
+-    const clean = String(code ?? "").trim().toUpperCase().slice(0, 40);
++    const clean = normalizeCode(code);
+     if (!clean) throw new BookingError("Enter a ticket code", 422);
+ 
+-    const rows = await sql`SELECT * FROM bookings WHERE ticket_code = ${clean}`;
+-    const b = rows[0] && rows[0].club_id === clubId ? rows[0] : null;
++    const rows = await sql`
++        SELECT b.*, (p.booking_id IS NOT NULL) AS has_photo_row, p.deleted_at AS photo_deleted_at
++          FROM bookings b
++          LEFT JOIN id_photos p ON p.booking_id = b.id
++         WHERE b.ticket_code = ${clean}`;
++    const row = rows[0] && rows[0].club_id === clubId ? rows[0] : null;
++
++    if (!row) {
++        const scan_id = await logScan({ code: clean, clubId, gate, result: "invalid", reason: "No ticket with this code at your venue" });
++        return { result: "invalid", reason: "No ticket with this code at your venue", scan_id, booking: null };
++    }
+ 
++    const booking = withPhotoStatus(row);
+     let result;
+     let reason = null;
+-    if (!b) {
+-        result = "invalid";
+-        reason = "No ticket with this code at your venue";
+-    } else if (b.status !== "approved") {
+-        result = "declined";
+-        reason = `Ticket is ${b.status}`;
+-    } else if (b.used_at) {
++    if (row.status !== "approved") {
++        result = "not_approved";
++        reason = row.status === "pending" ? "Not approved by the club yet" : `Ticket is ${row.status}`;
++    } else if (row.used_at) {
+         result = "already_used";
+-        reason = `Already admitted at ${new Date(b.used_at).toLocaleTimeString("en-IN")}`;
++        reason = `Already admitted at ${new Date(row.used_at).toLocaleTimeString("en-IN")}`;
+     } else {
+-        const upd = await sql`UPDATE bookings SET used_at = now()
+-                               WHERE id = ${b.id} AND used_at IS NULL RETURNING id`;
+-        if (upd.length) {
+-            result = "admitted";
++        result = "scanned";
++    }
++
++    const scan_id = await logScan({ bookingId: row.id, code: clean, clubId, gate, result, reason, b: row });
++    return { result, reason, scan_id, booking };
++}
++
++/**
++ * Step 2: the gate approves (admits) or declines the guest shown by lookupTicket.
++ * Approving sets used_at so the ticket cannot be used twice. The ID photo is deleted
++ * once the door has decided, whichever the decision is.
++ */
++export async function decideScan({ scanId, clubId, gate, decision }) {
++    await ensureReady();
++    if (!["approve", "decline"].includes(decision)) {
++        throw new BookingError("Decision must be approve or decline", 422);
++    }
++    const rows = await sql`SELECT * FROM scan_logs WHERE id = ${scanId} AND club_id = ${clubId}`;
++    if (!rows.length) throw new BookingError("Scan not found", 404);
++    const s = rows[0];
++    if (s.result !== "scanned") {
++        throw new BookingError(`This scan is already ${s.result.replace("_", " ")}`, 409);
++    }
++
++    let final;
++    let reason = null;
++    if (decision === "approve") {
++        const up = await sql`UPDATE bookings SET used_at = now()
++                               WHERE id = ${s.booking_id} AND club_id = ${clubId}
++                                 AND status = 'approved' AND used_at IS NULL
++                           RETURNING id`;
++        if (up.length) {
++            final = "admitted";
+         } else {
+-            result = "already_used";
++            final = "already_used";
+             reason = "Admitted a moment ago at another gate";
+         }
++    } else {
++        final = "declined";
++        reason = "Entry refused at the gate";
+     }
+ 
+-    await sql`INSERT INTO scan_logs (id, booking_id, ticket_code, event_id, club_id, gate_user_id, gate_name, result, reason)
+-              VALUES (${crypto.randomBytes(12).toString("hex")}, ${b?.id ?? null}, ${clean},
+-                      ${b?.event_id ?? null}, ${clubId}, ${gate.id}, ${gate.name}, ${result}, ${reason})`;
+-
+-    return {
+-        result,
+-        reason,
+-        ticket: b
+-            ? {
+-                  attendee_name: b.attendee_name,
+-                  tier: b.tier,
+-                  quantity: b.quantity,
+-                  event_title: b.event_title,
+-                  ticket_code: b.ticket_code,
+-              }
+-            : null,
+-    };
++    await sql`UPDATE scan_logs SET result = ${final}, reason = ${reason}, decided_at = now()
++               WHERE id = ${scanId}`;
++    if (s.booking_id) await deleteIdPhoto(s.booking_id);
++    return { result: final, reason, scan_id: scanId };
+ }
+ 
+ export async function listScans(clubId, limit = 200) {
+@@ -289,7 +328,7 @@ export async function listScans(clubId, limit = 200) {
+     const rows = await sql`
+         SELECT * FROM scan_logs WHERE club_id = ${clubId}
+          ORDER BY scanned_at DESC LIMIT ${limit}`;
+-    return rows.map((r) => ({ ...r, scanned_at: iso(r.scanned_at) }));
++    return rows.map((r) => ({ ...r, scanned_at: iso(r.scanned_at), decided_at: iso(r.decided_at) }));
+ }
+ 
+ export { IMAGE_RE, MAX_PHOTO_BYTES };
+diff --git a/src/lib/db.js b/src/lib/db.js
+index 21f5559..a39f56f 100644
+--- a/src/lib/db.js
++++ b/src/lib/db.js
+@@ -111,6 +111,12 @@ const STATEMENTS = [
+         scanned_at   timestamptz NOT NULL DEFAULT now()
+     )`,
+     `CREATE INDEX IF NOT EXISTS scan_logs_club_idx ON scan_logs (club_id, scanned_at DESC)`,
++    `ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS attendee_name text`,
++    `ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS attendee_phone text`,
++    `ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS event_title text`,
++    `ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS tier text`,
++    `ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS quantity integer`,
++    `ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS decided_at timestamptz`,
+     `CREATE TABLE IF NOT EXISTS email_logs (
+         id         text PRIMARY KEY,
+         booking_id text,
+diff --git a/src/lib/devStore.js b/src/lib/devStore.js
+index fa6776c..9bfc2b4 100644
+--- a/src/lib/devStore.js
++++ b/src/lib/devStore.js
+@@ -69,3 +69,14 @@ export async function listAllBookings() {
+           FROM bookings ORDER BY created_at DESC LIMIT 200`;
+     return rows;
+ }
++
++/** Every QR scan and gate decision across all clubs, newest first. */
++export async function listAllScans(limit = 500) {
++    await ensureReady();
++    const rows = await sql`SELECT * FROM scan_logs ORDER BY scanned_at DESC LIMIT ${limit}`;
++    return rows.map((r) => ({
++        ...r,
++        scanned_at: r.scanned_at ? new Date(r.scanned_at).toISOString() : null,
++        decided_at: r.decided_at ? new Date(r.decided_at).toISOString() : null,
++    }));
++}
+diff --git a/src/views/ClubPanelPage.jsx b/src/views/ClubPanelPage.jsx
+index c44157c..1ca4be8 100644
+--- a/src/views/ClubPanelPage.jsx
++++ b/src/views/ClubPanelPage.jsx
+@@ -991,8 +991,10 @@ function GatesTab() {
+ 
+ const RESULT = {
+     admitted: ["green", "Admitted"],
++    scanned: ["grey", "Scanned"],
+     already_used: ["amber", "Already used"],
+     declined: ["red", "Declined"],
++    not_approved: ["red", "Not approved"],
+     invalid: ["red", "Invalid"],
+ };
+ 
+diff --git a/src/views/DevPanelPage.jsx b/src/views/DevPanelPage.jsx
+index 32d7290..1543f1e 100644
+--- a/src/views/DevPanelPage.jsx
++++ b/src/views/DevPanelPage.jsx
+@@ -15,6 +15,7 @@ const TABS = [
+     { id: "clubs", label: "Clubs" },
+     { id: "users", label: "Users & roles" },
+     { id: "bookings", label: "All bookings" },
++    { id: "scans", label: "QR scans" },
+     { id: "gateways", label: "Payment gateways" },
+ ];
+ 
+@@ -66,6 +67,7 @@ export default function DevPanelPage() {
+                     {tab === "clubs" && <ClubsTab />}
+                     {tab === "users" && <UsersTab />}
+                     {tab === "bookings" && <BookingsTab />}
++                    {tab === "scans" && <ScansTab />}
+                     {tab === "gateways" && <GatewaysTab />}
+                 </div>
+             </div>
+@@ -486,3 +488,117 @@ function GatewayRow({ gw, onSaved }) {
+         </div>
+     );
+ }
++
++/* ---------------------------- QR scans ---------------------------- */
++
++const SCAN_TONE = {
++    admitted: "green",
++    scanned: "grey",
++    already_used: "amber",
++    declined: "red",
++    not_approved: "red",
++    invalid: "red",
++};
++
++const SCAN_LABEL = {
++    admitted: "Admitted",
++    scanned: "Scanned, no decision",
++    already_used: "Already used",
++    declined: "Declined",
++    not_approved: "Not approved",
++    invalid: "Invalid",
++};
++
++function ScansTab() {
++    const [rows, setRows] = useState([]);
++    const [clubs, setClubs] = useState({});
++    const [loading, setLoading] = useState(true);
++    const [filter, setFilter] = useState("all");
++
++    const load = useCallback(() => {
++        setLoading(true);
++        return Promise.all([api.get("/dev/scans"), api.get("/dev/clubs")])
++            .then(([s, c]) => {
++                setRows(s.data);
++                setClubs(Object.fromEntries(c.data.map((x) => [x.id, x.name])));
++            })
++            .catch((e) => toast.error(errorText(e)))
++            .finally(() => setLoading(false));
++    }, []);
++
++    useEffect(() => {
++        load();
++    }, [load]);
++
++    const counts = rows.reduce((m, r) => ((m[r.result] = (m[r.result] || 0) + 1), m), {});
++    const shown = filter === "all" ? rows : rows.filter((r) => r.result === filter);
++
++    return (
++        <div className="space-y-4">
++            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
++                <Stat label="Total scans" value={rows.length} />
++                <Stat label="Admitted" value={counts.admitted || 0} />
++                <Stat label="Declined" value={counts.declined || 0} />
++                <Stat label="Problems" value={(counts.already_used || 0) + (counts.not_approved || 0) + (counts.invalid || 0)} />
++            </div>
++
++            <div className="flex flex-wrap items-center gap-2">
++                {["all", "admitted", "scanned", "declined", "already_used", "not_approved", "invalid"].map((k) => (
++                    <button
++                        key={k}
++                        type="button"
++                        onClick={() => setFilter(k)}
++                        className={`rounded-full px-3 py-1.5 font-body text-xs border ${filter === k ? "bg-white text-black border-white" : "bg-white/5 text-white/70 border-white/10"}`}
++                    >
++                        {k === "all" ? "All" : SCAN_LABEL[k]}
++                    </button>
++                ))}
++                <div className="flex-1" />
++                <Btn onClick={load} aria-label="Refresh scans">
++                    <RefreshCw className="w-4 h-4" /> Refresh
++                </Btn>
++            </div>
++
++            {loading ? (
++                <div className="text-white/50 font-body">Loading…</div>
++            ) : shown.length === 0 ? (
++                <Empty>No scans match this filter.</Empty>
++            ) : (
++                <div className="rounded-2xl border border-white/10 overflow-x-auto" data-testid="dev-scan-table">
++                    <table className="w-full text-left font-body text-xs md:text-sm">
++                        <thead className="text-[11px] uppercase tracking-widest text-white/40 bg-white/5">
++                            <tr>
++                                <th className="p-3">Scanned</th>
++                                <th className="p-3">Result</th>
++                                <th className="p-3">Guest</th>
++                                <th className="p-3">Phone</th>
++                                <th className="p-3">Ticket</th>
++                                <th className="p-3">Event</th>
++                                <th className="p-3">Club</th>
++                                <th className="p-3">Gate staff</th>
++                                <th className="p-3">Decided</th>
++                                <th className="p-3">Note</th>
++                            </tr>
++                        </thead>
++                        <tbody>
++                            {shown.map((r) => (
++                                <tr key={r.id} className="border-t border-white/5" data-testid={`dev-scan-${r.id}`}>
++                                    <td className="p-3 whitespace-nowrap text-white/60">{fmtDateTime(r.scanned_at)}</td>
++                                    <td className="p-3"><Badge tone={SCAN_TONE[r.result] || "grey"}>{SCAN_LABEL[r.result] || r.result}</Badge></td>
++                                    <td className="p-3">{r.attendee_name || "—"}</td>
++                                    <td className="p-3">{r.attendee_phone || "—"}</td>
++                                    <td className="p-3 font-mono">{r.ticket_code || "—"}</td>
++                                    <td className="p-3">{r.event_title || "—"}</td>
++                                    <td className="p-3">{clubs[r.club_id] || r.club_id || "—"}</td>
++                                    <td className="p-3">{r.gate_name || "—"}</td>
++                                    <td className="p-3 whitespace-nowrap text-white/60">{r.decided_at ? fmtDateTime(r.decided_at) : "—"}</td>
++                                    <td className="p-3 text-white/60">{r.reason || "—"}</td>
++                                </tr>
++                            ))}
++                        </tbody>
++                    </table>
++                </div>
++            )}
++        </div>
++    );
++}
+diff --git a/src/views/GatePage.jsx b/src/views/GatePage.jsx
+index f5c45c2..53d217c 100644
+--- a/src/views/GatePage.jsx
++++ b/src/views/GatePage.jsx
+@@ -3,28 +3,46 @@
+ import { useCallback, useEffect, useRef, useState } from "react";
+ import { useNav } from "@/lib/useNav";
+ import { toast } from "sonner";
+-import { CheckCircle2, XCircle, AlertTriangle, ScanLine, Loader2 } from "lucide-react";
++import { CheckCircle2, XCircle, AlertTriangle, ScanLine, QrCode, Keyboard, Loader2, Phone, Mail } from "lucide-react";
+ import AppShell from "@/components/AppShell";
++import QRScanner from "@/components/QRScanner";
+ import { Badge, Btn, Card, inputCls, fmtDateTime } from "@/components/PanelUI";
+ import { api, formatErr } from "@/lib/api";
+ import { useAuth } from "@/context/AuthContext";
++import { BOOKING_TYPES } from "@/lib/eventSchema";
+ 
+-const RESULT_UI = {
+-    admitted: { box: "border-emerald-400/50 bg-emerald-500/15", color: "text-emerald-300", icon: CheckCircle2, label: "ADMITTED" },
+-    already_used: { box: "border-amber-400/50 bg-amber-500/15", color: "text-amber-300", icon: AlertTriangle, label: "ALREADY USED" },
+-    declined: { box: "border-red-400/50 bg-red-500/15", color: "text-red-300", icon: XCircle, label: "DECLINED" },
+-    invalid: { box: "border-red-400/50 bg-red-500/15", color: "text-red-300", icon: XCircle, label: "INVALID" },
++const LOG_TONE = {
++    admitted: "green",
++    scanned: "grey",
++    already_used: "amber",
++    declined: "red",
++    not_approved: "red",
++    invalid: "red",
+ };
+ 
+-const LOG_TONE = { admitted: "green", already_used: "amber", declined: "red", invalid: "red" };
++const LOG_LABEL = {
++    admitted: "Admitted",
++    scanned: "Scanned",
++    already_used: "Already used",
++    declined: "Declined",
++    not_approved: "Not approved",
++    invalid: "Invalid",
++};
++
++const errText = (err) => formatErr(err?.response?.data?.detail) || err?.message || "Something went wrong";
+ 
+ export default function GatePage() {
+     const { user, loading } = useAuth();
+     const nav = useNav();
++    const [mode, setMode] = useState("camera"); // camera | type
+     const [code, setCode] = useState("");
+-    const [result, setResult] = useState(null);
++    const [look, setLook] = useState(null); // response of /api/gate/lookup
++    const [photo, setPhoto] = useState(null);
++    const [photoState, setPhotoState] = useState("idle"); // idle | loading | none
++    const [decided, setDecided] = useState(null); // response of /api/gate/decision
+     const [busy, setBusy] = useState(false);
+     const [log, setLog] = useState([]);
++    const busyRef = useRef(false);
+     const inputRef = useRef(null);
+ 
+     useEffect(() => {
+@@ -42,24 +60,63 @@ export default function GatePage() {
+         if (user && ["gate", "club_admin"].includes(user.role)) loadLog();
+     }, [user, loadLog]);
+ 
+-    // Gate scanners type the code and press Enter, so keep the input focused.
++    const reset = useCallback(() => {
++        setLook(null);
++        setPhoto(null);
++        setPhotoState("idle");
++        setDecided(null);
++        setCode("");
++        loadLog();
++    }, [loadLog]);
++
++    // After a decision, show it briefly and go back to the scanner for the next guest.
+     useEffect(() => {
+-        inputRef.current?.focus();
+-    }, [result]);
++        if (!decided) return;
++        const t = setTimeout(reset, decided.result === "admitted" ? 1800 : 3000);
++        return () => clearTimeout(t);
++    }, [decided, reset]);
+ 
+-    const submit = async (e) => {
+-        e?.preventDefault();
+-        const clean = code.trim();
+-        if (!clean || busy) return;
++    // Step 1: a code was read (camera or typed). Load the guest details.
++    const lookup = async (raw) => {
++        const clean = String(raw ?? "").trim().toUpperCase();
++        if (!clean || busyRef.current) return;
++        busyRef.current = true;
+         setBusy(true);
+         try {
+-            const { data } = await api.post("/gate/scan", { code: clean });
+-            setResult(data);
+-            setCode("");
++            const { data } = await api.post("/gate/lookup", { code: clean });
++            setLook(data);
++            if (data.booking?.photo_status === "on_file") {
++                setPhotoState("loading");
++                api.get(`/gate/photo/${data.booking.id}`)
++                    .then((r) => {
++                        setPhoto(r.data.data);
++                        setPhotoState("ok");
++                    })
++                    .catch(() => setPhotoState("none"));
++            } else {
++                setPhotoState("none");
++            }
++        } catch (err) {
++            toast.error(errText(err));
++        } finally {
++            busyRef.current = false;
++            setBusy(false);
++        }
++    };
++
++    // Step 2: approve (admit) or decline.
++    const decide = async (decision) => {
++        if (!look?.scan_id || busyRef.current) return;
++        busyRef.current = true;
++        setBusy(true);
++        try {
++            const { data } = await api.post("/gate/decision", { scan_id: look.scan_id, decision });
++            setDecided(data);
+             loadLog();
+         } catch (err) {
+-            toast.error(formatErr(err.response?.data?.detail) || err.message);
++            toast.error(errText(err));
+         } finally {
++            busyRef.current = false;
+             setBusy(false);
+         }
+     };
+@@ -79,76 +136,83 @@ export default function GatePage() {
+         );
+     }
+ 
+-    const ui = result ? RESULT_UI[result.result] : null;
++    const b = look?.booking;
++    const eligible = look?.result === "scanned" && !decided;
+ 
+     return (
+         <AppShell hideBottomNav>
+-            <div className="max-w-2xl mx-auto px-5 md:px-10 py-8 space-y-6">
+-                <div>
+-                    <h1 className="font-display text-3xl font-bold tracking-tight flex items-center gap-3">
+-                        <ScanLine className="w-7 h-7" /> Gate scanner
++            <div className="max-w-2xl mx-auto px-5 md:px-10 py-6 space-y-5">
++                <div className="flex items-center justify-between gap-3">
++                    <h1 className="font-display text-2xl md:text-3xl font-bold tracking-tight flex items-center gap-3">
++                        <ScanLine className="w-7 h-7" /> Gate
+                     </h1>
+-                    <p className="font-body text-white/50 text-sm mt-1">
+-                        Scan the ticket QR or type the code (BASH-XXXXXXXX) and press Enter.
+-                    </p>
++                    {!look && (
++                        <div className="flex rounded-full bg-white/5 border border-white/10 p-1" role="tablist">
++                            <button
++                                type="button"
++                                onClick={() => setMode("camera")}
++                                data-testid="mode-camera"
++                                className={`flex items-center gap-2 rounded-full px-4 py-2 font-body text-sm ${mode === "camera" ? "bg-white text-black" : "text-white/70"}`}
++                            >
++                                <QrCode className="w-4 h-4" /> Scan QR
++                            </button>
++                            <button
++                                type="button"
++                                onClick={() => setMode("type")}
++                                data-testid="mode-type"
++                                className={`flex items-center gap-2 rounded-full px-4 py-2 font-body text-sm ${mode === "type" ? "bg-white text-black" : "text-white/70"}`}
++                            >
++                                <Keyboard className="w-4 h-4" /> Type code
++                            </button>
++                        </div>
++                    )}
+                 </div>
+ 
+-                <form onSubmit={submit} className="flex gap-3">
+-                    <input
+-                        ref={inputRef}
+-                        value={code}
+-                        onChange={(e) => setCode(e.target.value.toUpperCase())}
+-                        placeholder="BASH-XXXXXXXX"
+-                        autoComplete="off"
+-                        autoCapitalize="characters"
+-                        data-testid="gate-code-input"
+-                        className={`${inputCls} font-mono text-lg tracking-widest py-4`}
+-                    />
+-                    <Btn variant="primary" type="submit" disabled={busy || !code.trim()} className="px-6">
+-                        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Check"}
+-                    </Btn>
+-                </form>
+-
+-                {result && ui && (
+-                    <div
+-                        data-testid="gate-result"
+-                        data-result={result.result}
+-                        className={`rounded-3xl border-2 p-6 ${ui.box}`}
++                {/* ---- waiting for a code ---- */}
++                {!look && mode === "camera" && <QRScanner onCode={lookup} />}
++
++                {!look && mode === "type" && (
++                    <form
++                        onSubmit={(e) => {
++                            e.preventDefault();
++                            lookup(code);
++                        }}
++                        className="flex gap-3"
+                     >
+-                        <div className="flex items-center gap-3">
+-                            <ui.icon className={`w-10 h-10 ${ui.color}`} />
+-                            <div>
+-                                <div className={`font-display text-3xl font-bold ${ui.color}`}>{ui.label}</div>
+-                                {result.reason && <div className="font-body text-sm text-white/80 mt-1">{result.reason}</div>}
+-                            </div>
+-                        </div>
+-                        {result.ticket && (
+-                            <dl className="grid grid-cols-2 gap-3 mt-5 font-body text-sm">
+-                                <div>
+-                                    <dt className="text-[11px] uppercase tracking-widest text-white/40">Guest</dt>
+-                                    <dd className="text-white">{result.ticket.attendee_name}</dd>
+-                                </div>
+-                                <div>
+-                                    <dt className="text-[11px] uppercase tracking-widest text-white/40">Category</dt>
+-                                    <dd className="text-white">
+-                                        {result.ticket.tier} × {result.ticket.quantity}
+-                                    </dd>
+-                                </div>
+-                                <div className="col-span-2">
+-                                    <dt className="text-[11px] uppercase tracking-widest text-white/40">Event</dt>
+-                                    <dd className="text-white">{result.ticket.event_title}</dd>
+-                                </div>
+-                            </dl>
+-                        )}
+-                        <div className="mt-5">
+-                            <Btn onClick={() => setResult(null)} data-testid="gate-clear">
+-                                Next guest
+-                            </Btn>
+-                        </div>
+-                    </div>
++                        <input
++                            ref={inputRef}
++                            autoFocus
++                            value={code}
++                            onChange={(e) => setCode(e.target.value.toUpperCase())}
++                            placeholder="BASH-XXXXXXXX"
++                            autoComplete="off"
++                            autoCapitalize="characters"
++                            data-testid="gate-code-input"
++                            className={`${inputCls} font-mono text-lg tracking-widest py-4`}
++                        />
++                        <Btn variant="primary" type="submit" disabled={busy || !code.trim()} className="px-6">
++                            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Check"}
++                        </Btn>
++                    </form>
+                 )}
+ 
+-                <Card title="Recent scans" subtitle="Everything scanned at this venue, newest first. Your scans are logged with your name.">
++                {/* ---- guest details + decision ---- */}
++                {look && (
++                    <GuestPanel
++                        look={look}
++                        b={b}
++                        photo={photo}
++                        photoState={photoState}
++                        decided={decided}
++                        eligible={eligible}
++                        busy={busy}
++                        onApprove={() => decide("approve")}
++                        onDecline={() => decide("decline")}
++                        onNext={reset}
++                    />
++                )}
++
++                <Card title="Recent scans" subtitle="Every scan at this venue, newest first, with your name on it.">
+                     {log.length === 0 ? (
+                         <div className="font-body text-sm text-white/50">No scans yet.</div>
+                     ) : (
+@@ -156,12 +220,12 @@ export default function GatePage() {
+                             {log.map((r) => (
+                                 <li key={r.id} className="py-3 flex items-center justify-between gap-3 font-body text-sm">
+                                     <div className="min-w-0">
+-                                        <div className="font-mono text-xs text-white/70 truncate">{r.ticket_code || "—"}</div>
+-                                        <div className="text-[11px] text-white/40">
+-                                            {fmtDateTime(r.scanned_at)} · {r.gate_name}
++                                        <div className="text-white/90 truncate">{r.attendee_name || "Unknown ticket"}</div>
++                                        <div className="font-mono text-[11px] text-white/40">
++                                            {r.ticket_code || "—"} · {fmtDateTime(r.scanned_at)} · {r.gate_name}
+                                         </div>
+                                     </div>
+-                                    <Badge tone={LOG_TONE[r.result] || "grey"}>{r.result.replace("_", " ")}</Badge>
++                                    <Badge tone={LOG_TONE[r.result] || "grey"}>{LOG_LABEL[r.result] || r.result}</Badge>
+                                 </li>
+                             ))}
+                         </ul>
+@@ -171,3 +235,120 @@ export default function GatePage() {
+         </AppShell>
+     );
+ }
++
++function GuestPanel({ look, b, photo, photoState, decided, eligible, busy, onApprove, onDecline, onNext }) {
++    // Banner text: the final decision wins, otherwise the lookup result.
++    const banner = decided
++        ? decided.result === "admitted"
++            ? { cls: "border-emerald-400/60 bg-emerald-500/15", color: "text-emerald-300", Icon: CheckCircle2, text: "ADMITTED" }
++            : decided.result === "declined"
++              ? { cls: "border-red-400/60 bg-red-500/15", color: "text-red-300", Icon: XCircle, text: "DECLINED" }
++              : { cls: "border-amber-400/60 bg-amber-500/15", color: "text-amber-300", Icon: AlertTriangle, text: "ALREADY USED" }
++        : look.result === "scanned"
++          ? { cls: "border-emerald-400/40 bg-emerald-500/10", color: "text-emerald-300", Icon: CheckCircle2, text: "VALID — CHECK THE GUEST" }
++          : look.result === "not_approved"
++            ? { cls: "border-red-400/60 bg-red-500/15", color: "text-red-300", Icon: XCircle, text: "NOT APPROVED — DO NOT ADMIT" }
++            : look.result === "already_used"
++              ? { cls: "border-amber-400/60 bg-amber-500/15", color: "text-amber-300", Icon: AlertTriangle, text: "ALREADY USED" }
++              : { cls: "border-red-400/60 bg-red-500/15", color: "text-red-300", Icon: XCircle, text: "INVALID TICKET" };
++
++  const reasonText = decided?.reason || look.reason;
++
++    return (
++        <div className="space-y-4" data-testid="gate-result" data-result={decided?.result || look.result}>
++            <div className={`rounded-3xl border-2 p-5 ${banner.cls}`}>
++                <div className="flex items-center gap-3">
++                    <banner.Icon className={`w-9 h-9 shrink-0 ${banner.color}`} />
++                    <div>
++                        <div className={`font-display text-2xl md:text-3xl font-bold ${banner.color}`} data-testid="gate-banner">
++                            {banner.text}
++                        </div>
++                        {reasonText && <div className="font-body text-sm text-white/80 mt-1">{reasonText}</div>}
++                    </div>
++                </div>
++            </div>
++
++            {b && (
++                <div className="rounded-3xl border border-white/10 bg-white/5 p-5 space-y-5">
++                    <div>
++                        <div className="font-body text-[11px] uppercase tracking-widest text-white/40">Guest</div>
++                        <div className="font-display text-2xl font-bold mt-1" data-testid="gate-guest-name">{b.attendee_name}</div>
++                        <div className="mt-2 flex flex-col gap-1 font-body text-sm text-white/80">
++                            <a href={`tel:${b.attendee_phone}`} className="flex items-center gap-2 hover:text-white">
++                                <Phone className="w-4 h-4" /> {b.attendee_phone}
++                            </a>
++                            <a href={`mailto:${b.attendee_email}`} className="flex items-center gap-2 hover:text-white break-all">
++                                <Mail className="w-4 h-4 shrink-0" /> {b.attendee_email}
++                            </a>
++                        </div>
++                    </div>
++
++                    <dl className="grid grid-cols-2 gap-x-4 gap-y-3 font-body text-sm">
++                        <Info k="Ticket number" v={b.ticket_code} mono />
++                        <Info k="Category" v={`${b.tier} × ${b.quantity}`} />
++                        <Info k="Event" v={b.event_title} />
++                        <Info k="Booking" v={BOOKING_TYPES.find((t) => t.slug === b.booking_type)?.name.split(" (")[0]} />
++                        <Info k="ID type" v={b.id_type} />
++                        <Info k="ID number" v={`•••• ${b.id_last4}`} mono />
++                    </dl>
++
++                    <div>
++                        <div className="font-body text-[11px] uppercase tracking-widest text-white/40 mb-2">ID photo</div>
++                        {photoState === "loading" && <div className="text-white/50 font-body text-sm">Loading photo…</div>}
++                        {photo && (
++                            <img
++                                src={photo}
++                                alt="Guest ID"
++                                data-testid="gate-id-photo"
++                                className="w-full max-h-[320px] object-contain rounded-2xl bg-black/40"
++                            />
++                        )}
++                        {photoState !== "loading" && !photo && (
++                            <div className="text-white/50 font-body text-sm">
++                                {b.photo_status === "deleted"
++                                    ? "The ID photo has already been deleted."
++                                    : "No ID photo was collected for this booking."}
++                            </div>
++                        )}
++                    </div>
++                </div>
++            )}
++
++            {eligible ? (
++                <div className="grid grid-cols-2 gap-3">
++                    <button
++                        type="button"
++                        onClick={onApprove}
++                        disabled={busy}
++                        data-testid="approve-entry"
++                        className="rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-display font-bold text-xl py-6 flex items-center justify-center gap-2 transition"
++                    >
++                        <CheckCircle2 className="w-6 h-6" /> Approve
++                    </button>
++                    <button
++                        type="button"
++                        onClick={onDecline}
++                        disabled={busy}
++                        data-testid="decline-entry"
++                        className="rounded-2xl bg-red-500 hover:bg-red-400 disabled:opacity-50 text-white font-display font-bold text-xl py-6 flex items-center justify-center gap-2 transition"
++                    >
++                        <XCircle className="w-6 h-6" /> Decline
++                    </button>
++                </div>
++            ) : (
++                <Btn variant="primary" className="w-full py-4" onClick={onNext} data-testid="gate-next">
++                    Next guest
++                </Btn>
++            )}
++        </div>
++    );
++}
++
++function Info({ k, v, mono = false }) {
++    return (
++        <div>
++            <dt className="text-[11px] uppercase tracking-widest text-white/40">{k}</dt>
++            <dd className={`text-white/90 break-all ${mono ? "font-mono" : ""}`}>{v || "—"}</dd>
++        </div>
++    );
++}

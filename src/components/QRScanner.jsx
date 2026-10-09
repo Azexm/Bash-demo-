@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import jsQR from "jsqr";
 
-// Reads QR codes from the camera with the browser's built-in BarcodeDetector.
-// Supported in Chrome and Edge (Android and desktop). Where it is missing, the
-// gate uses "Type code" instead. The camera stops as soon as one code is read,
-// and it restarts when this component is mounted again.
+// Reads QR codes from the camera.
+// Uses the browser's built-in BarcodeDetector when it exists (Chrome/Edge). Otherwise
+// it decodes each frame with jsQR, which works in every modern browser.
+// The camera stops as soon as one code is read, and restarts when this component mounts again.
 export default function QRScanner({ onCode }) {
     const videoRef = useRef(null);
     const onCodeRef = useRef(onCode);
@@ -13,15 +14,37 @@ export default function QRScanner({ onCode }) {
     const [message, setMessage] = useState("Starting camera…");
 
     useEffect(() => {
-        if (typeof window === "undefined" || !("BarcodeDetector" in window)) {
-            setMessage("This browser cannot read QR codes from the camera. Use Chrome or Edge, or switch to Type code.");
+        if (!navigator.mediaDevices?.getUserMedia) {
+            setMessage("Camera needs a secure (https) page. Use Type code instead.");
             return;
         }
 
         let stream = null;
         let timer = null;
         let done = false;
-        const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+        const detector =
+            typeof window !== "undefined" && "BarcodeDetector" in window
+                ? new window.BarcodeDetector({ formats: ["qr_code"] })
+                : null;
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+        const readFrame = async (video) => {
+            if (detector) {
+                const codes = await detector.detect(video);
+                return codes[0]?.rawValue ?? null;
+            }
+            // jsQR on a downscaled frame: fast enough on phones
+            const srcW = video.videoWidth;
+            const srcH = video.videoHeight;
+            if (!srcW || !srcH) return null;
+            const scale = Math.min(1, 640 / srcW);
+            canvas.width = Math.round(srcW * scale);
+            canvas.height = Math.round(srcH * scale);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            return jsQR(img.data, canvas.width, canvas.height)?.data ?? null;
+        };
 
         (async () => {
             try {
@@ -40,16 +63,17 @@ export default function QRScanner({ onCode }) {
 
                 timer = setInterval(async () => {
                     if (done || video.readyState < 2) return;
+                    let value = null;
                     try {
-                        const codes = await detector.detect(video);
-                        if (codes.length && !done) {
-                            done = true;
-                            onCodeRef.current(codes[0].rawValue);
-                        }
+                        value = await readFrame(video);
                     } catch {
-                        /* a frame failed to decode; try the next one */
+                        value = null; // a frame failed; try the next one
                     }
-                }, 250);
+                    if (value && !done) {
+                        done = true;
+                        onCodeRef.current(value);
+                    }
+                }, 200);
             } catch {
                 setMessage("Camera unavailable. Allow camera access, or use Type code.");
             }
