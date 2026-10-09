@@ -62,7 +62,7 @@ Tables are created automatically on the first request; `scripts/schema.sql` (or 
 ## Not yet real
 
 - **Payments** are simulated. The gateway chosen in the Developer panel is recorded on each booking, but no money moves. Wire the SDK into `src/app/api/bookings/pay/route.js`.
-- **Ticket QR codes** are not generated yet. Gate staff type or scan the `BASH-XXXXXXXX` code.
+- **Gate camera scanning**: tickets now show a QR (generated in `src/lib/qr.js`, no extra package) that encodes the `BASH-XXXXXXXX` code. The gate page accepts a typed code or a handheld/keyboard-style scanner; it has no built-in camera scanner yet.
 - **Refunds** for rejected exclusive bookings are not automated.
 
 ## Routes

@@ -168,3 +168,45 @@ body {
 html {
     scroll-behavior: smooth;
 }
+
+/* Ticket halves with transparent notches at the perforation */
+.ticket-top {
+    -webkit-mask-image:
+        radial-gradient(circle 14px at 0 100%, transparent 97%, #000 100%),
+        radial-gradient(circle 14px at 100% 100%, transparent 97%, #000 100%);
+    mask-image:
+        radial-gradient(circle 14px at 0 100%, transparent 97%, #000 100%),
+        radial-gradient(circle 14px at 100% 100%, transparent 97%, #000 100%);
+    -webkit-mask-size: 51% 100%, 51% 100%;
+    mask-size: 51% 100%, 51% 100%;
+    -webkit-mask-position: left top, right top;
+    mask-position: left top, right top;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+}
+.ticket-bottom {
+    -webkit-mask-image:
+        radial-gradient(circle 14px at 0 0, transparent 97%, #000 100%),
+        radial-gradient(circle 14px at 100% 0, transparent 97%, #000 100%);
+    mask-image:
+        radial-gradient(circle 14px at 0 0, transparent 97%, #000 100%),
+        radial-gradient(circle 14px at 100% 0, transparent 97%, #000 100%);
+    -webkit-mask-size: 51% 100%, 51% 100%;
+    mask-size: 51% 100%, 51% 100%;
+    -webkit-mask-position: left top, right top;
+    mask-position: left top, right top;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+}
+
+/* Booking summary ticket: notches where the dashed stub begins (stub is 7rem wide) */
+.mini-ticket {
+    -webkit-mask-image:
+        radial-gradient(circle 9px at calc(100% - 7rem) 0, transparent 97%, #000 100%),
+        radial-gradient(circle 9px at calc(100% - 7rem) 100%, transparent 97%, #000 100%);
+    mask-image:
+        radial-gradient(circle 9px at calc(100% - 7rem) 0, transparent 97%, #000 100%),
+        radial-gradient(circle 9px at calc(100% - 7rem) 100%, transparent 97%, #000 100%);
+    -webkit-mask-composite: source-in;
+    mask-composite: intersect;
+}

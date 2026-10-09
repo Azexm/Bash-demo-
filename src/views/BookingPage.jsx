@@ -12,8 +12,11 @@ import {
     Smartphone,
     Building2,
     Loader2,
+    PartyPopper,
+    Hourglass,
 } from "lucide-react";
 import AppShell from "@/components/AppShell";
+import TicketCard from "@/components/TicketCard";
 import { api, formatErr, inr } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
@@ -31,6 +34,7 @@ export default function BookingPage() {
     const [err, setErr] = useState("");
     const [loading, setLoading] = useState(false);
     const [showPay, setShowPay] = useState(false);
+    const [done, setDone] = useState(null); // the paid booking, shown on the confirmation screen
 
     const [form, setForm] = useState({
         attendee_name: user?.name || "",
@@ -85,6 +89,8 @@ export default function BookingPage() {
         (t) => t.name.toLowerCase() === tierName.toLowerCase(),
     );
     const amount = bookingType === "guestlist" ? 0 : (tier?.price || 0) * form.quantity;
+
+    if (done) return <Confirmation booking={done} nav={nav} />;
 
     const next = () => {
         setErr("");
@@ -158,7 +164,8 @@ export default function BookingPage() {
                 payment_method: payMethod,
             });
             setShowPay(false);
-            nav(`/tickets?new=${data.id}`);
+            setDone(data);
+            if (typeof window !== "undefined") window.scrollTo({ top: 0 });
         } catch (e) {
             setErr(formatErr(e.response?.data?.detail) || e.message);
             setShowPay(false);
@@ -209,30 +216,8 @@ export default function BookingPage() {
                     ))}
                 </div>
 
-                {/* Event summary strip */}
-                <div className="rounded-2xl bg-white/5 border border-white/10 p-4 mb-6 flex items-center gap-4">
-                    <img
-                        src={event.image}
-                        alt={event.title}
-                        className="w-16 h-16 rounded-xl object-cover"
-                    />
-                    <div className="flex-1">
-                        <div className="font-display font-semibold">
-                            {event.artist}
-                        </div>
-                        <div className="text-xs text-white/60 font-body">
-                            {event.venue} · {event.date}
-                        </div>
-                    </div>
-                    <div className="text-right">
-                        <div className="text-xs text-white/50 font-body">
-                            {tier?.name}
-                        </div>
-                        <div className="font-display font-bold text-lg">
-                            {inr(amount)}
-                        </div>
-                    </div>
-                </div>
+                {/* Event summary, styled as a ticket */}
+                <MiniTicket event={event} tier={tier} quantity={form.quantity} amount={amount} />
 
                 {BOOKING_NOTE[bookingType] && (
                     <div
@@ -637,5 +622,92 @@ function PayOption({ icon, label, sub, active, onClick, testid }) {
                 className={`w-5 h-5 rounded-full border-2 ${active ? "border-purple-400 bg-purple-400" : "border-white/30"}`}
             />
         </button>
+    );
+}
+
+function MiniTicket({ event, tier, quantity, amount }) {
+    return (
+        <div
+            data-testid="booking-mini-ticket"
+            className="mini-ticket mb-6 flex overflow-hidden rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg shadow-purple-900/30"
+        >
+            <img src={event.image} alt={event.title} className="w-24 shrink-0 object-cover" />
+            <div className="min-w-0 flex-1 p-4 text-white">
+                <div className="truncate font-display text-base font-bold leading-tight">{event.artist || event.title}</div>
+                <div className="mt-1 truncate text-xs font-body text-white/80">{event.venue}</div>
+                <div className="mt-0.5 text-xs font-body text-white/80">
+                    {event.date}
+                    {event.time ? ` · ${event.time}` : ""}
+                </div>
+            </div>
+            <div className="flex w-28 shrink-0 flex-col items-end justify-center border-l-2 border-dashed border-white/40 px-4 text-right text-white">
+                <div className="text-[10px] uppercase tracking-widest text-white/70 font-body">{tier?.name}</div>
+                <div className="text-[11px] font-body text-white/80">× {quantity}</div>
+                <div className="mt-1 font-display text-xl font-bold">{inr(amount)}</div>
+            </div>
+        </div>
+    );
+}
+
+const CONFIRM_COPY = {
+    approved: {
+        icon: PartyPopper,
+        title: "You're in!",
+        text: "Payment received. Your ticket is ready, show the QR at the gate.",
+    },
+    pending: {
+        icon: Hourglass,
+        title: "Booking received",
+        text: "The club will review it shortly. Your QR appears on the ticket as soon as it is approved.",
+    },
+};
+
+function Confirmation({ booking, nav }) {
+    const copy = CONFIRM_COPY[booking.status] || CONFIRM_COPY.pending;
+    const Icon = copy.icon;
+    return (
+        <AppShell hideBottomNav>
+            <div data-testid="booking-confirmation" className="mx-auto max-w-md px-5 py-8">
+                <motion.div
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="rounded-[36px] bg-gradient-to-b from-blue-500 via-indigo-500 to-purple-600 p-5 pb-7 shadow-2xl shadow-purple-900/40"
+                >
+                    <div className="mb-4 flex items-center gap-3 px-1 text-white">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20">
+                            <Icon className="h-5 w-5" />
+                        </div>
+                        <div>
+                            <h1 className="font-display text-2xl font-bold leading-tight">{copy.title}</h1>
+                            <p className="mt-0.5 text-xs text-white/80 font-body">{copy.text}</p>
+                        </div>
+                    </div>
+
+                    <TicketCard ticket={booking} />
+
+                    <div className="mt-5 flex justify-center gap-1.5" aria-hidden="true">
+                        <span className="h-1.5 w-6 rounded-full bg-white" />
+                        <span className="h-1.5 w-1.5 rounded-full bg-white/40" />
+                        <span className="h-1.5 w-1.5 rounded-full bg-white/40" />
+                    </div>
+                </motion.div>
+
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                    <button
+                        onClick={() => nav(`/tickets?new=${booking.id}`)}
+                        data-testid="view-my-tickets"
+                        className="rounded-full bg-gradient-to-r from-blue-500 to-purple-600 py-4 font-display font-semibold"
+                    >
+                        View my tickets
+                    </button>
+                    <button
+                        onClick={() => nav("/")}
+                        className="rounded-full border border-white/15 bg-white/5 py-4 font-display font-semibold hover:bg-white/10"
+                    >
+                        Browse events
+                    </button>
+                </div>
+            </div>
+        </AppShell>
     );
 }
